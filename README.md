@@ -2,7 +2,19 @@
 
 Generatore a pagamento di poster PNG, clip verticali MP4 e didascalie BookTok. Gli esempi pubblici sono già pronti. Solo gli account registrati con crediti possono generare; l'account proprietario è gratuito.
 
-## Attivazione
+## Partenza gratuita, solo per l'autore
+
+1. Carica `app.py` e `requirements.txt` in un repository GitHub pubblico, nella cartella principale.
+2. In Streamlit Community Cloud crea l'app scegliendo quel repository e `app.py`.
+3. In **Advanced settings → Secrets**, aggiungi soltanto:
+
+```toml
+OWNER_PASSWORD = "una-password-lunga-scelta-da-te"
+```
+
+Non inserire questa password in GitHub e non mostrarla negli screenshot. Quando l'app si apre, gli altri vedono soltanto gli esempi e il libro; tu inserisci la password nell'area Accesso autore per generare gratis. Il link pubblico non deve essere promosso come servizio a pagamento finché il checkout non è attivo.
+
+## Attivazione dei pagamenti, in un secondo momento
 
 1. Crea un progetto Supabase. In **SQL Editor** esegui tutto `database.sql`. In Authentication abilita Email e la conferma email. Copia Project URL e la chiave `anon`/publishable e `service_role`/secret dalle impostazioni API.
 2. Apri un account Stripe e recupera la **secret key** (usa prima quella di test). Non serve creare un prodotto: l'app crea Checkout a 2,99 € per 5 crediti. Verifica che l'account Stripe possa ricevere pagamenti prima di usare la chiave live.

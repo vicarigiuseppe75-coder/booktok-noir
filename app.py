@@ -5,6 +5,7 @@ No secret belongs in this file or a public Git repository.
 """
 
 import io
+import hmac
 import math
 import random
 import tempfile
@@ -262,7 +263,7 @@ st.markdown(f'<div class="hero">Vuoi leggere un vero thriller sci-fi noir? '
             unsafe_allow_html=True)
 
 if not configured():
-    st.info("Anteprima pubblica. Il proprietario deve configurare i servizi nella sezione Secrets prima di attivare accessi e pagamenti.")
+    st.info("Anteprima pubblica. La creazione è riservata al proprietario finché i pagamenti non sono attivi.")
 
 st.subheader("Esempi creati con l'app")
 columns = st.columns(3)
@@ -272,6 +273,53 @@ for i, (column, example) in enumerate(zip(columns, EXAMPLES)):
                  width="stretch")
 
 if not configured():
+    owner_password = setting("OWNER_PASSWORD")
+    if not owner_password:
+        st.info("Generatore non ancora attivo: il proprietario deve aggiungere OWNER_PASSWORD nelle impostazioni riservate dell'app.")
+        st.stop()
+    if not st.session_state.get("owner_unlocked"):
+        with st.form("owner_access"):
+            entered_password = st.text_input("Accesso autore", type="password")
+            enter = st.form_submit_button("Entra")
+        if enter:
+            if hmac.compare_digest(entered_password, owner_password):
+                st.session_state.owner_unlocked = True
+                st.rerun()
+            else:
+                st.error("Password non corretta.")
+        st.stop()
+    st.success("Accesso autore: creazioni gratuite.")
+    if st.button("Esci dall'accesso autore"):
+        st.session_state.owner_unlocked = False
+        st.session_state.pop("result", None)
+        st.rerun()
+    with st.form("owner_generator"):
+        owner_text = st.text_area("Citazione, indizio o colpo di scena", max_chars=210,
+                                  placeholder="Il messaggio porta la mia firma. Arriverà domani.")
+        owner_preset = st.selectbox("Atmosfera", list(PRESETS))
+        owner_submit = st.form_submit_button("Genera poster + video", type="primary")
+    if owner_submit:
+        if len(owner_text.strip()) < 8:
+            st.warning("Scrivi almeno 8 caratteri.")
+        else:
+            with st.spinner("Creo il tuo contenuto..."):
+                try:
+                    png, mp4 = generate(owner_text.strip(), owner_preset,
+                                        random.SystemRandom().randrange(10**9))
+                    st.session_state.owner_result = {"png": png, "mp4": mp4,
+                                                     "caption": caption(owner_text.strip())}
+                except Exception:
+                    st.error("Creazione non riuscita. Riprova più tardi.")
+    owner_result = st.session_state.get("owner_result")
+    if owner_result:
+        st.subheader("Pronto da pubblicare")
+        st.image(owner_result["png"], width=360)
+        st.video(owner_result["mp4"])
+        a, b = st.columns(2)
+        a.download_button("Scarica poster PNG", owner_result["png"], "booktok_noir.png", "image/png")
+        b.download_button("Scarica video MP4", owner_result["mp4"], "booktok_noir.mp4", "video/mp4")
+        st.write("**Didascalia da copiare:**")
+        st.code(owner_result["caption"], language=None)
     st.stop()
 
 user = current_user()
