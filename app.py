@@ -16,7 +16,7 @@ import numpy as np
 import requests
 import streamlit as st
 import stripe
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 st.set_page_config(page_title="BookTok Noir", page_icon="🕵️", layout="wide")
@@ -154,7 +154,24 @@ def wrapped(draw, text, face, max_width):
     return lines or [""]
 
 
-def frame(text, preset, seed, reveal=1, width=540, height=960, watermark=False):
+def uploaded_photo(file):
+    """Decode a bounded user image; bytes stay in this session."""
+    if file is None:
+        return None
+    if file.size > 12 * 1024 * 1024:
+        raise ValueError("La foto deve pesare meno di 12 MB.")
+    with Image.open(io.BytesIO(file.getvalue())) as source:
+        if source.format not in ("JPEG", "PNG", "WEBP"):
+            raise ValueError("Usa una foto JPG, PNG o WEBP.")
+        source = ImageOps.exif_transpose(source)
+        if source.width * source.height > 25_000_000:
+            raise ValueError("La foto è troppo grande: riducila prima del caricamento.")
+        source.thumbnail((1800, 3200))
+        return source.convert("RGB").copy()
+
+
+def frame(text, preset, seed, reveal=1, width=540, height=960, watermark=False,
+          photo=None, motion=0):
     """Original procedural art; no copyrighted stock footage required."""
     rng = random.Random(seed)
     y_grid = np.linspace(0, 1, height, dtype=np.float32)[:, None, None]
@@ -163,6 +180,15 @@ def frame(text, preset, seed, reveal=1, width=540, height=960, watermark=False):
     pixels = np.broadcast_to(top * (1-y_grid) + bottom*y_grid,
                              (height, width, 3)).copy().astype(np.uint8)
     image = Image.fromarray(pixels).convert("RGBA")
+    if photo is not None:
+        # Fill 9:16, then pan and zoom gently across the photograph.
+        zoom = 1.08 + .08 * motion
+        fitted = ImageOps.fit(photo, (int(width * zoom), int(height * zoom)),
+                              method=Image.Resampling.LANCZOS)
+        dx = int((fitted.width - width) * motion)
+        dy = int((fitted.height - height) * (1 - motion))
+        image = fitted.crop((dx, dy, dx + width, dy + height)).convert("RGBA")
+        image.alpha_composite(Image.new("RGBA", (width, height), (3, 5, 18, 105)))
     draw = ImageDraw.Draw(image, "RGBA")
     accent = PRESETS[preset]
     cx, cy, r = int(width*.72), int(height*.25), int(width*.17)
@@ -173,17 +199,18 @@ def frame(text, preset, seed, reveal=1, width=540, height=960, watermark=False):
     for _ in range(60):
         x, y = rng.randrange(width), rng.randrange(int(height*.67))
         draw.ellipse((x, y, x+2, y+2), fill=(190, 230, 250, 110))
-    skyline = int(height*.83)
-    x = 0
-    while x < width:
-        bw = rng.randrange(20, 55)
-        bh = rng.randrange(int(height*.1), int(height*.32))
-        draw.rectangle((x, skyline-bh, x+bw, height), fill=(4, 7, 18, 255))
-        for wx in range(x+7, x+bw-4, 12):
-            for wy in range(skyline-bh+10, skyline-4, 18):
-                if rng.random() < .24:
-                    draw.rectangle((wx, wy, wx+3, wy+6), fill=(*accent, 100))
-        x += bw+rng.randrange(2, 8)
+    if photo is None:
+        skyline = int(height*.83)
+        x = 0
+        while x < width:
+            bw = rng.randrange(20, 55)
+            bh = rng.randrange(int(height*.1), int(height*.32))
+            draw.rectangle((x, skyline-bh, x+bw, height), fill=(4, 7, 18, 255))
+            for wx in range(x+7, x+bw-4, 12):
+                for wy in range(skyline-bh+10, skyline-4, 18):
+                    if rng.random() < .24:
+                        draw.rectangle((wx, wy, wx+3, wy+6), fill=(*accent, 100))
+            x += bw+rng.randrange(2, 8)
     for _ in range(65):
         x, y = rng.randrange(width), rng.randrange(height)
         draw.line((x, y, x-4, y+20), fill=(160, 210, 235, 40), width=1)
@@ -216,9 +243,9 @@ def frame(text, preset, seed, reveal=1, width=540, height=960, watermark=False):
     return image.convert("RGB")
 
 
-def generate(text, preset, seed):
+def generate(text, preset, seed, photo=None):
     png = io.BytesIO()
-    frame(text, preset, seed).save(png, format="PNG")
+    frame(text, preset, seed, photo=photo).save(png, format="PNG")
     with tempfile.TemporaryDirectory() as tmp:
         path = str(Path(tmp) / "booktok_noir.mp4")
         writer = imageio_ffmpeg.write_frames(
@@ -231,7 +258,7 @@ def generate(text, preset, seed):
         try:
             for i in range(32):
                 picture = frame(text, preset, seed, reveal=min(1, i/20),
-                                width=360, height=640)
+                                width=360, height=640, photo=photo, motion=i/31)
                 writer.send(np.asarray(picture, dtype=np.uint8).tobytes())
         finally:
             writer.close()
@@ -297,6 +324,8 @@ if not configured():
         owner_text = st.text_area("Citazione, indizio o colpo di scena", max_chars=210,
                                   placeholder="Il messaggio porta la mia firma. Arriverà domani.")
         owner_preset = st.selectbox("Atmosfera", list(PRESETS))
+        owner_file = st.file_uploader("Tua foto (facoltativa): JPG, PNG o WEBP",
+                                      type=["jpg", "jpeg", "png", "webp"], key="owner_photo")
         owner_submit = st.form_submit_button("Genera poster + video", type="primary")
     if owner_submit:
         if len(owner_text.strip()) < 8:
@@ -305,7 +334,8 @@ if not configured():
             with st.spinner("Creo il tuo contenuto..."):
                 try:
                     png, mp4 = generate(owner_text.strip(), owner_preset,
-                                        random.SystemRandom().randrange(10**9))
+                                        random.SystemRandom().randrange(10**9),
+                                        uploaded_photo(owner_file))
                     st.session_state.owner_result = {"png": png, "mp4": mp4,
                                                      "caption": caption(owner_text.strip())}
                 except Exception:
@@ -405,6 +435,8 @@ with st.form("generator"):
                         max_chars=210, height=125,
                         placeholder="Il messaggio porta la mia firma. Arriverà domani.")
     preset = st.selectbox("Atmosfera", list(PRESETS))
+    photo_file = st.file_uploader("Tua foto (facoltativa): JPG, PNG o WEBP",
+                                  type=["jpg", "jpeg", "png", "webp"], key="customer_photo")
     submit = st.form_submit_button("Genera poster + video", type="primary")
 
 if submit:
@@ -414,7 +446,8 @@ if submit:
     else:
         with st.spinner("Sto preparando il tuo contenuto..."):
             try:
-                png, mp4 = generate(cleaned, preset, random.SystemRandom().randrange(10**9))
+                png, mp4 = generate(cleaned, preset, random.SystemRandom().randrange(10**9),
+                                    uploaded_photo(photo_file))
                 if not owner:
                     remaining = api("/rest/v1/rpc/spend_credit", method="POST", admin=True,
                                     payload={"p_user_id": user["id"]})
